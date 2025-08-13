@@ -1,0 +1,18 @@
+﻿{
+  "name": "voice-assistant-netlify",
+  "version": "1.0.0",
+  "description": "Amma Hospital Voice Assistant on Netlify Functions",
+  "main": "netlify/functions/ask.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.6.8",
+    "busboy": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "openai": "^4.29.1"
+  }
+}
