@@ -1,6 +1,4 @@
-﻿// netlify/functions/ask.js
-const fs = require('fs');
-const path = require('path');
+﻿const fs = require('fs');
 const OpenAI = require('openai');
 const axios = require('axios');
 const busboy = require('busboy');
@@ -10,26 +8,22 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// A simplified scraper function that can be called directly
+// Scraper
 async function scrape(htmlContent) {
-  console.log('Starting scrape...');
   const $ = cheerio.load(htmlContent);
-
   const out = {
-    name: 'అమ్మ హాస్పిటల్',
-    tagline: '',
+    name: $('h1[data-key="hospital_name"]').text().trim() || 'అమ్మ హాస్పిటల్',
+    tagline: $('p[data-key="hospital_tagline"]').first().text().trim() || '',
     address: '',
     emergency_number: '',
     contact_numbers: [],
-    email: '',
+    email: $('span:contains("ammawomen.childcare@gmail.com")').text().trim() || '',
     services: [],
     doctors: [],
     working_hours: {},
     scrapedAt: new Date().toISOString()
   };
 
-  out.name = $('h1[data-key="hospital_name"]').text().trim() || 'అమ్మ హాస్పిటల్';
-  out.tagline = $('p[data-key="hospital_tagline"]').first().text().trim() || '';
   const emergencyText = $('.emergency-info .emergency-number').text().trim();
   out.emergency_number = emergencyText.split(':')[1]?.trim() || '';
 
@@ -37,7 +31,6 @@ async function scrape(htmlContent) {
     const number = $(el).text().trim();
     if (number.length > 5) out.contact_numbers.push(number);
   });
-  out.email = $('span:contains("ammawomen.childcare@gmail.com")').text().trim() || 'Not available';
 
   const aboutText = $('p[data-key="about_desc"]').text().trim();
   const addressMatch = aboutText.match(/అనంతపురము పట్టణంలోని (.+?)\./);
@@ -62,144 +55,105 @@ async function scrape(htmlContent) {
   return out;
 }
 
-// Function to transcribe audio
+// Transcribe
 async function transcribeAudio(audioBuffer) {
-  try {
-    // Save buffer to temporary file in Netlify function
-    const tempPath = '/tmp/recording.webm';
-    fs.writeFileSync(tempPath, audioBuffer);
+  const tempPath = '/tmp/recording.webm';
+  fs.writeFileSync(tempPath, audioBuffer);
 
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(tempPath),
-      model: "whisper-1",
-      language: "te"
-    });
+  const transcription = await openai.audio.transcriptions.create({
+    file: fs.createReadStream(tempPath),
+    model: "whisper-1",
+    language: "te"
+  });
 
-    console.log('Transcription:', transcription.text);
-    return transcription.text;
-  } catch (error) {
-    console.error('Error during transcription:', error);
-    throw new Error('Transcription failed.');
-  }
+  return transcription.text;
 }
 
-// Function to generate a reply
+// Generate Reply
 async function generateReply(userText, data) {
   const query = userText.toLowerCase().trim();
-  const langMatch = userText.match(/[\u0C00-\u0C7F]/);
-  const lang = langMatch ? 'te' : 'en';
+  const lang = /[\u0C00-\u0C7F]/.test(userText) ? 'te' : 'en';
 
-  if (query.includes('అడ్రస్') || query.includes('address') || query.includes('location')) {
+  if (query.includes('address') || query.includes('అడ్రస్') || query.includes('location')) {
     return lang === 'te'
       ? `అమ్మ హాస్పిటల్ అనంతపురంలో ఆర్టీసీ బస్టాండ్ సమీపంలో ఉంది.`
       : `Amma Hospital is located in Anantapur, near the RTC Bus Stand.`;
   }
-  if (query.includes('ఫోన్') || query.includes('contact') || query.includes('phone') || query.includes('నెంబర్')) {
+  if (query.includes('phone') || query.includes('ఫోన్') || query.includes('contact') || query.includes('నెంబర్')) {
     return lang === 'te'
       ? `మీరు మమ్మల్ని ${data.contact_numbers.join(' లేదా ')} నెంబర్లలో సంప్రదించవచ్చు.`
       : `You can contact us at ${data.contact_numbers.join(' or ')}.`;
   }
-  if (query.includes('సేవలు') || query.includes('services')) {
-    const servicesList = data.services.join(', ');
+  if (query.includes('services') || query.includes('సేవలు')) {
     return lang === 'te'
-      ? `మా ప్రధాన సేవలు: ${servicesList} మరియు మరెన్నో.`
-      : `Our main services are ${servicesList}, and many more.`;
+      ? `మా ప్రధాన సేవలు: ${data.services.join(', ')} మరియు మరెన్నో.`
+      : `Our main services are ${data.services.join(', ')}, and many more.`;
   }
-  if (query.includes('డాక్టర్') || query.includes('doctor')) {
-    const doctor = data.doctors[0];
+  if (query.includes('doctor') || query.includes('డాక్టర్')) {
+    const doc = data.doctors[0];
     return lang === 'te'
-      ? `మా హాస్పిటల్ ప్రధాన డాక్టర్ డాక్టర్ టి. శివజ్యోతి గారు, ఆమె Obstetrics & Gynecology నిపుణురాలు.`
-      : `Our main doctor is Dr. T. Sivajyothi, an expert in Obstetrics & Gynecology.`;
+      ? `మా హాస్పిటల్ ప్రధాన డాక్టర్ ${doc.name}, ఆమె Obstetrics & Gynecology నిపుణురాలు.`
+      : `Our main doctor is ${doc.name}, an expert in Obstetrics & Gynecology.`;
   }
-  if (query.includes('టైమింగ్స్') || query.includes('hours') || query.includes('సమయాలు')) {
-    const hours = data.working_hours;
+  if (query.includes('hours') || query.includes('సమయాలు') || query.includes('టైమింగ్స్')) {
     return lang === 'te'
-      ? `మా పని సమయాలు: సోమవారం నుండి శనివారం వరకు ${hours.mon_sat} మరియు ఆదివారం ${hours.sunday}.`
-      : `Our working hours are from Monday to Saturday: ${hours.mon_sat}, and on Sunday: ${hours.sunday}.`;
+      ? `మా పని సమయాలు: సోమ-శని ${data.working_hours.mon_sat}, ఆదివారం ${data.working_hours.sunday}.`
+      : `Our working hours: Mon-Sat ${data.working_hours.mon_sat}, Sun ${data.working_hours.sunday}.`;
   }
 
-  try {
-    const prompt = `You are a friendly voice assistant for Amma Hospital in Anantapur. Use the following data for facts:
-    <JSON data>
-    ${JSON.stringify(data)}
-    </JSON data>
-    User asked: "${userText}"
-    Give a short, clear spoken reply (Telugu or English based on query). If you cannot find a fact, say in Telugu or English: "I will connect you to our representative." Keep length under 35 words.`;
+  // AI Reply
+  const chatCompletion = await openai.chat.completions.create({
+    model: 'gpt-3.5-turbo',
+    messages: [{
+      role: 'user',
+      content: `You are a voice assistant for Amma Hospital in Anantapur. Use this data: ${JSON.stringify(data)}. User asked: "${userText}". Reply under 35 words in ${lang === 'te' ? 'Telugu' : 'English'}.`
+    }],
+    temperature: 0.5
+  });
 
-    const chatCompletion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.5,
-    });
-
-    const reply = chatCompletion.choices[0].message.content.trim();
-    console.log('LLM Reply:', reply);
-    return reply;
-
-  } catch (error) {
-    console.error('Error calling OpenAI LLM:', error);
-    return lang === 'te'
-      ? 'క్షమించండి, నేను మీ అభ్యర్థనను ప్రస్తుతం ప్రాసెస్ చేయలేకపోతున్నాను. దయచేసి హాస్పిటల్‌కి నేరుగా కాల్ చేయండి.'
-      : 'I apologize, I am unable to process your request at the moment. Please call the hospital directly.';
-  }
+  return chatCompletion.choices[0].message.content.trim();
 }
 
-// Function to synthesize speech
+// Speech Synthesis
 async function synthesizeSpeech(text) {
-  try {
-    const response = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}`,
-      {
-        text,
-        model_id: 'eleven_multilingual_v2',
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
-        },
+  const response = await axios.post(
+    `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}`,
+    {
+      text,
+      model_id: 'eleven_multilingual_v2',
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+    },
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'xi-api-key': process.env.ELEVENLABS_API_KEY,
+        'Accept': 'audio/mpeg',
       },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'xi-api-key': process.env.ELEVENLABS_API_KEY,
-          'Accept': 'audio/mpeg',
-        },
-        responseType: 'arraybuffer',
-      }
-    );
+      responseType: 'arraybuffer',
+    }
+  );
 
-    const audioBase64 = Buffer.from(response.data, 'binary').toString('base64');
-    return audioBase64;
-  } catch (error) {
-    console.error('Error during speech synthesis:', error.response?.data?.toString() || error.message);
-    throw new Error('Speech synthesis failed.');
-  }
+  return Buffer.from(response.data, 'binary').toString('base64');
 }
 
-// The main handler for the Netlify Function
-exports.handler = async (event, context) => {
+// Handler
+exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
   const bb = busboy({ headers: event.headers });
-  let audioBuffer;
-
-  const getAudioBuffer = new Promise((resolve, reject) => {
-    bb.on('file', (name, file, info) => {
-      const chunks = [];
-      file.on('data', data => chunks.push(data));
+  const audioBuffer = await new Promise((resolve, reject) => {
+    const chunks = [];
+    bb.on('file', (_, file) => {
+      file.on('data', d => chunks.push(d));
       file.on('end', () => resolve(Buffer.concat(chunks)));
     });
-    bb.on('error', err => reject(err));
+    bb.on('error', reject);
     bb.end(Buffer.from(event.body, 'base64'));
   });
 
   try {
-    audioBuffer = await getAudioBuffer;
-    if (!audioBuffer) {
-      return { statusCode: 400, body: JSON.stringify({ error: 'No audio file uploaded.' }) };
-    }
-
     const htmlResponse = await axios.get('https://ammahospital.com/');
     const hospitalData = await scrape(htmlResponse.data);
 
@@ -210,13 +164,10 @@ exports.handler = async (event, context) => {
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: replyText,
-        audio: audioBase64
-      }),
+      body: JSON.stringify({ text: replyText, audio: audioBase64 }),
     };
   } catch (err) {
-    console.error('Error in Netlify function:', err);
+    console.error('Function error:', err.message);
     return {
       statusCode: 500,
       body: JSON.stringify({ error: 'Internal server error. Please try again.' }),
