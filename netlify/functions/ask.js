@@ -4,7 +4,7 @@ const path = require('path');
 const OpenAI = require('openai');
 const axios = require('axios');
 const busboy = require('busboy');
-const cheerio = require('cheerio'); // Add cheerio import here
+const cheerio = require('cheerio');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -32,7 +32,7 @@ async function scrape(htmlContent) {
   out.tagline = $('p[data-key="hospital_tagline"]').first().text().trim() || '';
   const emergencyText = $('.emergency-info .emergency-number').text().trim();
   out.emergency_number = emergencyText.split(':')[1]?.trim() || '';
-  
+
   $('.footer-section h4:contains("సంప్రదింపు వివరాలు")').next().find('span').each((i, el) => {
     const number = $(el).text().trim();
     if (number.length > 5) out.contact_numbers.push(number);
@@ -47,7 +47,7 @@ async function scrape(htmlContent) {
     const serviceName = $(el).text().trim();
     if (serviceName) out.services.push(serviceName);
   });
-  
+
   const doctorMatch = aboutText.match(/డాక్టర్ టి\. శివజ్యోతి/);
   if (doctorMatch) {
     out.doctors.push({
@@ -58,18 +58,23 @@ async function scrape(htmlContent) {
 
   out.working_hours['mon_sat'] = $('p:contains("సోమ - శని:")').text().split(':')[1]?.trim();
   out.working_hours['sunday'] = $('p:contains("ఆదివారం:")').text().split(':')[1]?.trim();
-  
+
   return out;
 }
 
 // Function to transcribe audio
 async function transcribeAudio(audioBuffer) {
   try {
+    // Save buffer to temporary file in Netlify function
+    const tempPath = '/tmp/recording.webm';
+    fs.writeFileSync(tempPath, audioBuffer);
+
     const transcription = await openai.audio.transcriptions.create({
-      file: audioBuffer,
+      file: fs.createReadStream(tempPath),
       model: "whisper-1",
-      language: "te" 
+      language: "te"
     });
+
     console.log('Transcription:', transcription.text);
     return transcription.text;
   } catch (error) {
@@ -85,22 +90,32 @@ async function generateReply(userText, data) {
   const lang = langMatch ? 'te' : 'en';
 
   if (query.includes('అడ్రస్') || query.includes('address') || query.includes('location')) {
-    return lang === 'te' ? `అమ్మ హాస్పిటల్ అనంతపురంలో ఆర్టీసీ బస్టాండ్ సమీపంలో ఉంది.` : `Amma Hospital is located in Anantapur, near the RTC Bus Stand.`;
+    return lang === 'te'
+      ? `అమ్మ హాస్పిటల్ అనంతపురంలో ఆర్టీసీ బస్టాండ్ సమీపంలో ఉంది.`
+      : `Amma Hospital is located in Anantapur, near the RTC Bus Stand.`;
   }
   if (query.includes('ఫోన్') || query.includes('contact') || query.includes('phone') || query.includes('నెంబర్')) {
-    return lang === 'te' ? `మీరు మమ్మల్ని ${data.contact_numbers.join(' లేదా ')} నెంబర్లలో సంప్రదించవచ్చు.` : `You can contact us at ${data.contact_numbers.join(' or ')}.`;
+    return lang === 'te'
+      ? `మీరు మమ్మల్ని ${data.contact_numbers.join(' లేదా ')} నెంబర్లలో సంప్రదించవచ్చు.`
+      : `You can contact us at ${data.contact_numbers.join(' or ')}.`;
   }
   if (query.includes('సేవలు') || query.includes('services')) {
     const servicesList = data.services.join(', ');
-    return lang === 'te' ? `మా ప్రధాన సేవలు: ${servicesList} మరియు మరెన్నో.` : `Our main services are ${servicesList}, and many more.`;
+    return lang === 'te'
+      ? `మా ప్రధాన సేవలు: ${servicesList} మరియు మరెన్నో.`
+      : `Our main services are ${servicesList}, and many more.`;
   }
   if (query.includes('డాక్టర్') || query.includes('doctor')) {
     const doctor = data.doctors[0];
-    return lang === 'te' ? `మా హాస్పిటల్ ప్రధాన డాక్టర్ డాక్టర్ టి. శివజ్యోతి గారు, ఆమె Obstetrics & Gynecology నిపుణురాలు.` : `Our main doctor is Dr. T. Sivajyothi, an expert in Obstetrics & Gynecology.`;
+    return lang === 'te'
+      ? `మా హాస్పిటల్ ప్రధాన డాక్టర్ డాక్టర్ టి. శివజ్యోతి గారు, ఆమె Obstetrics & Gynecology నిపుణురాలు.`
+      : `Our main doctor is Dr. T. Sivajyothi, an expert in Obstetrics & Gynecology.`;
   }
   if (query.includes('టైమింగ్స్') || query.includes('hours') || query.includes('సమయాలు')) {
     const hours = data.working_hours;
-    return lang === 'te' ? `మా పని సమయాలు: సోమవారం నుండి శనివారం వరకు ${hours.mon_sat} మరియు ఆదివారం ${hours.sunday}.` : `Our working hours are from Monday to Saturday: ${hours.mon_sat}, and on Sunday: ${hours.sunday}.`;
+    return lang === 'te'
+      ? `మా పని సమయాలు: సోమవారం నుండి శనివారం వరకు ${hours.mon_sat} మరియు ఆదివారం ${hours.sunday}.`
+      : `Our working hours are from Monday to Saturday: ${hours.mon_sat}, and on Sunday: ${hours.sunday}.`;
   }
 
   try {
@@ -116,14 +131,16 @@ async function generateReply(userText, data) {
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.5,
     });
-    
+
     const reply = chatCompletion.choices[0].message.content.trim();
     console.log('LLM Reply:', reply);
     return reply;
 
   } catch (error) {
     console.error('Error calling OpenAI LLM:', error);
-    return lang === 'te' ? 'క్షమించండి, నేను మీ అభ్యర్థనను ప్రస్తుతం ప్రాసెస్ చేయలేకపోతున్నాను. దయచేసి హాస్పిటల్‌కి నేరుగా కాల్ చేయండి.' : 'I apologize, I am unable to process your request at the moment. Please call the hospital directly.';
+    return lang === 'te'
+      ? 'క్షమించండి, నేను మీ అభ్యర్థనను ప్రస్తుతం ప్రాసెస్ చేయలేకపోతున్నాను. దయచేసి హాస్పిటల్‌కి నేరుగా కాల్ చేయండి.'
+      : 'I apologize, I am unable to process your request at the moment. Please call the hospital directly.';
   }
 }
 
@@ -169,7 +186,6 @@ exports.handler = async (event, context) => {
 
   const getAudioBuffer = new Promise((resolve, reject) => {
     bb.on('file', (name, file, info) => {
-      const { filename, encoding, mimeType } = info;
       const chunks = [];
       file.on('data', data => chunks.push(data));
       file.on('end', () => resolve(Buffer.concat(chunks)));
@@ -193,9 +209,7 @@ exports.handler = async (event, context) => {
 
     return {
       statusCode: 200,
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text: replyText,
         audio: audioBase64

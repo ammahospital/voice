@@ -5,12 +5,45 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Amma Hospital Voice Assistant</title>
   <style>
-    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f0f2f5; }
-    .container { text-align: center; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #f0f2f5;
+    }
+    .container {
+      text-align: center;
+      background: white;
+      padding: 40px;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
     h1 { color: #333; }
-    #mic { background-color: #007bff; color: white; border: none; border-radius: 50%; width: 80px; height: 80px; font-size: 3rem; cursor: pointer; transition: background-color 0.3s; margin-bottom: 20px; }
+    #mic {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 80px;
+      height: 80px;
+      font-size: 3rem;
+      cursor: pointer;
+      transition: background-color 0.3s;
+      margin-bottom: 20px;
+    }
+    #mic.recording {
+      background-color: #dc3545;
+    }
     #mic:hover { background-color: #0056b3; }
-    #txt { font-size: 1.2rem; color: #555; min-height: 24px; }
+    #txt {
+      font-size: 1.2rem;
+      color: #555;
+      min-height: 24px;
+    }
     audio { display: none; margin-top: 20px; }
     .status { margin-top: 10px; color: #6c757d; }
   </style>
@@ -21,46 +54,71 @@
     <button id="mic">🎤</button>
     <div id="txt">Click the microphone to ask a question.</div>
     <div class="status"></div>
-    <audio id="player"></audio>
+    <audio id="player" autoplay></audio>
   </div>
   <script>
     const micButton = document.getElementById('mic');
     const player = document.getElementById('player');
     const txtDisplay = document.getElementById('txt');
     const statusDisplay = document.querySelector('.status');
-    const apiUrl = '/.netlify/functions/ask'; 
+    const apiUrl = '/.netlify/functions/ask';
 
     micButton.onclick = async () => {
-      if (micButton.classList.contains('recording')) {
-        return;
-      }
-      
+      if (micButton.classList.contains('recording')) return;
+
       statusDisplay.innerText = 'Listening...';
       txtDisplay.innerText = '';
       micButton.classList.add('recording');
-      
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
         const chunks = [];
-        
+
         mediaRecorder.ondataavailable = e => chunks.push(e.data);
-        
+
         mediaRecorder.onstop = async () => {
-          statusDisplay.innerText = 'Transcribing and generating reply...';
+          statusDisplay.innerText = 'Processing...';
           const blob = new Blob(chunks, { type: 'audio/webm' });
           const formData = new FormData();
           formData.append('audio', blob, 'recording.webm');
-          
-          const response = await fetch(apiUrl, { method: 'POST', body: formData });
-          const result = await response.json();
-          
-          if (response.ok) {
+
+          try {
+            const response = await fetch(apiUrl, { method: 'POST', body: formData });
+            const result = await response.json();
+
+            if (!response.ok) throw new Error(result.error || 'Server error');
+
             txtDisplay.innerText = result.text;
             statusDisplay.innerText = 'Playing response...';
             player.src = 'data:audio/mpeg;base64,' + result.audio;
+            player.play();
+
             player.onended = () => {
               statusDisplay.innerText = 'Ready.';
               micButton.classList.remove('recording');
             };
-            player
+          } catch (err) {
+            console.error(err);
+            statusDisplay.innerText = 'Error: ' + err.message;
+            micButton.classList.remove('recording');
+          }
+        };
+
+        mediaRecorder.start();
+
+        // Auto stop after 5 seconds
+        setTimeout(() => {
+          mediaRecorder.stop();
+          stream.getTracks().forEach(track => track.stop());
+        }, 5000);
+
+      } catch (err) {
+        console.error(err);
+        statusDisplay.innerText = 'Microphone access denied.';
+        micButton.classList.remove('recording');
+      }
+    };
+  </script>
+</body>
+</html>
